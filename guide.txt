@@ -1,0 +1,73 @@
+# 프로젝트 컨텍스트 및 아키텍처 가이드 (LLM 참조용)
+
+## 1. 프로젝트 개요 (Project Overview)
+- **프로젝트 경로**: `c:\dev\my-battlecats-game`
+- **현재 구현 기능**: 화면 중앙에 위치한 초록색 사각형(플레이어)을 키보드(`W`, `A`, `S`, `D` 및 방향키)로 8방향 이동시킬 수 있는 2D 탑다운(Top-Down) 프로토타입 프로그램
+- **기술 스택 및 환경**:
+  - **게임 엔진**: Phaser (`4.0.0`, ES Module 기반)
+  - **번들러 / 개발 서버**: Vite (`^6.3.1`), 기본 개발 포트 `8080` (`vite/config.dev.mjs`)
+  - **모듈 시스템**: ES Modules (`"type": "module"`)
+  - **주의사항 (Phaser 4.0.0 호환성)**: 설치된 Phaser ESM 번들(`node_modules/phaser/dist/phaser.esm.js`)은 `default` export를 제공하지 않으므로, 반드시 `import * as Phaser from 'phaser';` 형태로 네임스페이스 임포트를 사용해야 빌드 오류가 발생하지 않습니다.
+
+---
+
+## 2. 디렉토리 구조 (`src/` 내부)
+```text
+src/
+├── main.js               # 애플리케이션 엔트리 포인트 (DOM 로드 후 게임 실행)
+└── game/
+    ├── main.js           # Phaser.Game 인스턴스 설정 및 생성 팩토리
+    └── scenes/
+        └── Game.js       # 메인 게임 씬 (플레이어 생성, 키 입력 바인딩, 물리 이동 로직)
+```
+
+---
+
+## 3. `src/` 내부 JS 파일 상세 명세
+
+### 3.1. `src/main.js`
+- **역할**: 브라우저의 DOM 로드 완료 이벤트(`DOMContentLoaded`)를 감지하여 Phaser 게임을 초기화하는 최상위 진입점입니다.
+- **주요 로직**:
+  - `src/game/main.js`에서 `StartGame` 함수를 임포트합니다.
+  - `index.html` 내부의 `<div id="game-container"></div>` 요소를 타겟으로 `StartGame('game-container')`를 호출합니다.
+
+### 3.2. `src/game/main.js`
+- **역할**: Phaser 게임 엔진의 전역 설정(`config`)을 정의하고 `Phaser.Game` 인스턴스를 생성하여 반환합니다.
+- **주요 설정값 (`config`)**:
+  - `type`: `Phaser.AUTO` (WebGL 우선, 미지원 시 Canvas 폴백)
+  - `width`: `1024`, `height`: `768` (해상도 1024x768)
+  - `parent`: `'game-container'`
+  - `backgroundColor`: `'#1c1c1c'`
+  - `physics`:
+    - `default`: `'arcade'` (Arcade 물리 엔진 사용)
+    - `arcade.gravity`: `{ y: 0 }` (중력 없음, 탑다운 2D 뷰)
+    - `arcade.debug`: `true` (충돌 히트박스 외곽선 및 이동 속도/방향 벡터 선을 화면에 시각화)
+  - `scale`:
+    - `mode`: `Phaser.Scale.FIT` (화면 비율 유지 맞춤)
+    - `autoCenter`: `Phaser.Scale.CENTER_BOTH` (화면 가로/세로 중앙 정렬)
+  - `scene`: `[Game]` (`src/game/scenes/Game.js`의 `Game` 클래스 등록)
+
+### 3.3. `src/game/scenes/Game.js`
+- **역할**: 실제 게임 오브젝트 생성과 매 프레임 업데이트 로직을 담당하는 메인 씬(`Phaser.Scene` 상속, 씬 키: `'Game'`)입니다.
+- **메서드별 동작**:
+  1. `constructor()`: `super('Game')`으로 씬의 고유 키를 `'Game'`으로 초기화합니다.
+  2. `create()`:
+     - **배경 설정**: `this.cameras.main.setBackgroundColor(0x222222)`로 짙은 회색 배경을 지정합니다.
+     - **플레이어 생성**: 화면 중앙 좌표(`centerX = this.scale.width / 2`, `centerY = this.scale.height / 2`, 즉 512, 384)에 가로 40, 세로 40 크기의 초록색(`0x00ff00`) 사각형(`this.add.rectangle`)을 생성하여 `this.player`에 저장합니다.
+     - **물리 바디 연결**: `this.physics.add.existing(this.player)`로 Arcade 물리 바디를 부여하고, `this.player.body.setCollideWorldBounds(true)`를 통해 화면 경계 밖으로 나가지 않도록 설정합니다.
+     - **키보드 입력 설정**:
+       - `this.cursors`: 방향키(`Up`, `Down`, `Left`, `Right`) 입력 객체 생성
+       - `this.keys`: `W`(위), `S`(아래), `A`(왼쪽), `D`(오른쪽) 키 입력 객체 매핑
+     - **이동 속도**: `this.playerSpeed = 250` (초당 픽셀 이동 속도)
+  3. `update()`:
+     - 매 프레임마다 `vx`, `vy` 방향 변수를 `0`으로 초기화한 뒤, `WASD` 또는 방향키의 눌림 상태(`isDown`)를 확인하여 `-1`, `0`, `+1` 값을 계산합니다.
+     - 입력이 있을 경우(`vx !== 0 || vy !== 0`), `new Phaser.Math.Vector2(vx, vy).normalize()`를 사용하여 벡터를 정규화합니다. (대각선 이동 시 속도가 $\sqrt{2}$배 빨라지는 현상 방지)
+     - 정규화된 방향 벡터에 `this.playerSpeed`를 곱해 `this.player.body.setVelocity(x, y)`로 이동 속도를 적용합니다.
+     - 입력이 없을 경우 `this.player.body.setVelocity(0, 0)`으로 즉시 정지시킵니다.
+
+---
+
+## 4. 실행 및 빌드 명령어
+- **개발 서버 실행 (로컬 8080 포트)**: `npm run dev-nolog`
+- **프로덕션 빌드 테스트**: `npm run build-nolog`
+
